@@ -1,0 +1,653 @@
+This patch should be applied first.
+
+diff -pru H:\get\illya.vaes4\tk4.1\os2.my/tkOS2Cursor.c os2/tkOS2Cursor.c
+--- H:/get/illya.vaes4/tk4.1/os2.my/tkOS2Cursor.c	Sun Jun 22 19:50:24 1997
++++ os2/tkOS2Cursor.c	Sun Jun 22 22:04:10 1997
+@@ -86,7 +86,7 @@ static struct CursorName {
+     {"wait",			SPTR_WAIT},
+     {"xterm",			SPTR_TEXT},
+     /* cursors without moderately reasonable equivalents: question mark icon */
+-/*    {"boat",			SPTR_QUESICON}, */
++/*    {"boat",			SPTR_QUESICON},
+     {"bogosity",		SPTR_QUESICON},
+     {"box_spiral",		SPTR_QUESICON},
+     {"circle",			SPTR_QUESICON},
+@@ -98,7 +98,7 @@ static struct CursorName {
+     {"draped_box",		SPTR_QUESICON},
+     {"exchange",		SPTR_QUESICON},
+     {"gobbler",			SPTR_QUESICON},
+-/*    {"gumby",			SPTR_QUESICON}, */
++    {"gumby",			SPTR_QUESICON},
+     {"hand1",			SPTR_QUESICON},
+     {"hand2",			SPTR_QUESICON},
+     {"heart",			SPTR_QUESICON},
+@@ -119,7 +119,7 @@ static struct CursorName {
+     {"spraycan",		SPTR_QUESICON},
+     {"star",			SPTR_QUESICON},
+     {"trek",			SPTR_QUESICON},
+-/*    {"umbrella",		SPTR_QUESICON}, */
++    {"umbrella",		SPTR_QUESICON}, */
+     {NULL,			0}
+ };
+ /* Include cursors; done by Ilya Zakharevich */
+@@ -182,9 +182,7 @@ printf("TkGetCursorByName %s\n", string)
+ 	cursorPtr->system = 1;
+     } else {
+ 	myCursor *curPtr = cursors;
+-	/* Try to load from resources, use address of name as ID */
+-	cursorPtr->OS2Pointer = WinLoadPointer(HWND_DESKTOP, TkOS2GetTkModule(),
+-	                                       (ULONG)string);
++
+ 	/* Added X-derived cursors by Ilya Zakharevich */
+ 	cursorPtr->system = 0;
+ 	while (curPtr->name) {
+diff -pru H:\get\illya.vaes4\tk4.1\os2.my/tkOS2Font.c os2/tkOS2Font.c
+--- H:/get/illya.vaes4/tk4.1/os2.my/tkOS2Font.c	Sun Jun 22 19:50:24 1997
++++ os2/tkOS2Font.c	Wed Jun 25 18:05:00 1997
+@@ -129,7 +122,7 @@ nameLen);
+ 	goto nomatch;
+     }
+     logfont->fattrs.lMaxBaselineExt = pointSize / 10;
+-    logfont->pointSize = pointSize;
++    logfont->pixelSize = pointSize;
+ 
+     /*
+      * Apply any style modifiers.
+@@ -449,19 +443,18 @@ printf("    Unknown slant\n");
+ 	 * in pels per inch (eg.96).
+ 	 * PM coordinates are positive upwards, so positive number (as opposed
+ 	 * to Windows' negative number.
+-        logfont->pointSize = atoi(field[i]);
++        logfont->pixelSize = atoi(field[i]);
+ 	 */
+-        logfont->pointSize = atoi(field[i]) * 72 * 10 /
+-                             aDevCaps[CAPS_VERTICAL_FONT_RES];
++        logfont->pixelSize = atoi(field[i]) * 10;
+ #ifdef DEBUG
+-printf("    pixels %s, Vert.Font Res. %d, decipoints %d\n", field[i],
+-       aDevCaps[CAPS_VERTICAL_FONT_RES], logfont->pointSize);
++printf("    pixels %s\n", field[i],
++       aDevCaps[CAPS_VERTICAL_FONT_RES], logfont->pixelSize);
+ #endif
+ 
+         /* Round correctly instead of truncating */
+-        logfont->fattrs.lMaxBaselineExt = (logfont->pointSize + 5) / 10;
++        logfont->fattrs.lMaxBaselineExt = (logfont->pixelSize + 5) / 10;
+ #ifdef DEBUG
+-printf("    lMaxBaselineExt (point size) %d\n", logfont->fattrs.lMaxBaselineExt);
++printf("    lMaxBaselineExt (pixel size) %d\n", logfont->fattrs.lMaxBaselineExt);
+ #endif
+     }
+     if (--togo <= 0) return TRUE;
+@@ -474,11 +467,20 @@ printf("    lMaxBaselineExt (point size)
+     if (!(flen[i] == 0 ||
+ 	  (flen[i] == 1 && (field[i][0] == '*' || field[i][0] == '?'))))
+     {
+-        logfont->pointSize = atoi(field[i]);
++	/* We shrink 120 to 80 to facilitate better sizing.
++	   It looks like the displays which report 120 dpi have actual
++	   resolution close to 80 dpi. */
++        logfont->pixelSize 
++	    = atoi(field[i]) * 
++		(aDevCaps[CAPS_VERTICAL_FONT_RES] == 120
++		 ? 80 
++		 : aDevCaps[CAPS_VERTICAL_FONT_RES]) / 72;
++
+         /* Round correctly instead of truncating */
+-        logfont->fattrs.lMaxBaselineExt = (logfont->pointSize + 5) / 10;
++        logfont->fattrs.lMaxBaselineExt = (logfont->pixelSize + 5) / 10;
+ #ifdef DEBUG
+-printf("    lMaxBaselineExt (point size) %d\n", logfont->fattrs.lMaxBaselineExt);
++printf("    lMaxBaselineExt (pixels size) %d, Vert.Font Res. %d, decipixels %d, \n", 
++       logfont->fattrs.lMaxBaselineExt, aDevCaps[CAPS_VERTICAL_FONT_RES], logfont->pixelSize);
+ #endif
+     }
+     if (--togo <= 0) return TRUE;
+@@ -550,11 +552,12 @@ XLoadFont(display, name)
+     PFONTMETRICS os2fonts;
+     LONG reqFonts, remFonts;
+     BOOL found = FALSE;
+-    BOOL useIntended = TRUE;
++    BOOL useIntended = FALSE;	/* Use nominal size unless given PM-style specification. */
+     LONG outline = -1;
+     LONG font = 0;
+     SIZEF charBox;
+-    int i;
++    int i, error = 30000, best = -1;
++    TkOS2Font *logfont = logfonts + lFontID;	/* For debugging. */
+ 
+ #ifdef DEBUG
+     printf("XLoadFont %s\n", name);
+@@ -614,6 +617,7 @@ XLoadFont(display, name)
+     /* Not necessary to set shear by default */
+     logfonts[lFontID].setShear = FALSE;
+     logfonts[lFontID].outline = FALSE;
++    logfonts[lFontID].pixelSize = 120;
+ 
+     if (! (((name[0] == '-') || (name[0] == '*')) &&
+ 	     XNameToFont(name, &logfonts[lFontID]))) {
+@@ -622,17 +626,18 @@ XLoadFont(display, name)
+              * compatibility of scripts.
+              */
+     
+-            if ((strnicmp(name, "system", 6) == 0) ||	/* OS/2 and Windows font */
++            if ((stricmp(name, "system") == 0) ||	/* OS/2 and Windows font */
+                 (strnicmp(name, "device", 6) == 0)) {	/* Windows font */
+-                strncpy(logfonts[lFontID].fattrs.szFacename, "System", 6);
++		/* There is no System font. */
++                strncpy(logfonts[lFontID].fattrs.szFacename, "System VIO", 10);
+             } else if ((strnicmp(name, "systemmonospaced", 16) == 0) ||
+                        (strnicmp(name, "ansifixed", 9) == 0) ||	/* Windows font */
+                        (strnicmp(name, "systemfixed", 11) == 0) ||  /* Windows font */
+                        (strnicmp(name, "oemfixed", 8) == 0)) {	/* Windows font */
+-                strncpy(logfonts[lFontID].fattrs.szFacename, "System Monospaced", 11);
++                strncpy(logfonts[lFontID].fattrs.szFacename, "System Monospaced", 17);
+             } else if ((strnicmp(name, "systemproportional", 18) == 0) ||
+                        (strnicmp(name, "ansi", 4) == 0)) {	/* Windows font */
+-                strncpy(logfonts[lFontID].fattrs.szFacename, "System Proportional", 13);
++                strncpy(logfonts[lFontID].fattrs.szFacename, "System Proportional", 19);
+             } else {
+                 /*
+                  * The following code suggested by Ilya Zakharevich.
+@@ -656,12 +661,13 @@ XLoadFont(display, name)
+                 printf("    d %d, n %d\n", l, off);
+ #endif
+                     logfonts[lFontID].fattrs.lMaxBaselineExt = l;
+-                    logfonts[lFontID].pointSize = l * 10;
++                    logfonts[lFontID].pixelSize = l * 10;
+                     name += off;
+                     useIntended = TRUE;
+                     /* Get the fontname out */
+                     fields = sscanf(name, "%[^.]%n",
+-                                    &logfonts[lFontID].fattrs.szFacename, &off);
++                                    &logfonts[lFontID].fattrs.szFacename,
++				    &off);
+ #ifdef DEBUG
+                         printf("    sscanf returns %d, off %d\n", fields, off);
+ #endif
+@@ -750,6 +756,7 @@ XLoadFont(display, name)
+ #endif
+     reqFonts = remFonts;
+     /* Allocate space for the fonts */
++    if (reqFonts) {
+     os2fonts = (PFONTMETRICS) ckalloc(remFonts * sizeof(FONTMETRICS));
+     if (os2fonts == NULL) {
+         return (Font) 0;
+@@ -759,6 +766,10 @@ XLoadFont(display, name)
+     remFonts = GpiQueryFonts(globalPS, QF_PUBLIC,
+                              logfonts[lFontID].fattrs.szFacename, &reqFonts,
+                              (LONG) sizeof(FONTMETRICS), os2fonts);
++    } else {
++	os2fonts = NULL;
++    }
++
+ #ifdef DEBUG
+     if (remFonts == GPI_ALTERROR)
+         printf("    GpiQueryFonts %s ERROR %x\n", logfonts[lFontID].fattrs.szFacename,
+@@ -790,6 +801,7 @@ XLoadFont(display, name)
+                    os2fonts[i].szFacename, os2fonts[i].lMatch);
+ #endif
+         } else {
++	    int cerror = 0, err1;
+             /* Bitmap font, check size, type, resolution */
+             /*
+              * Note: FONTMETRICS.fsSelection can contain FM_SEL_ISO9241_TESTED,
+@@ -811,23 +823,37 @@ XLoadFont(display, name)
+             if ((os2fonts[i].sNominalPointSize ==
+                 logfonts[lFontID].fattrs.lMaxBaselineExt * 10) &&
+ */
+-            if (((useIntended ? os2fonts[i].sNominalPointSize :
+-                                (os2fonts[i].lMaxBaselineExt * 10)) ==
+-                logfonts[lFontID].fattrs.lMaxBaselineExt * 10) &&
+-/*
+-                ((os2fonts[i].fsSelection & ~FM_SEL_ISO9241_TESTED)
+-                 ==logfonts[lFontID].fattrs.fsSelection) &&
+-*/
+-                (os2fonts[i].sXDeviceRes == aDevCaps[CAPS_HORIZONTAL_FONT_RES]) &&
+-                (os2fonts[i].sYDeviceRes == aDevCaps[CAPS_VERTICAL_FONT_RES])) {
+-                found = TRUE;
+-                match = os2fonts[i].lMatch;
+-                font = i;
++	err1 = ( useIntended 
++		 ? os2fonts[i].sNominalPointSize :
++		 (os2fonts[i].lMaxBaselineExt * 10)) 
++	    - logfonts[lFontID].fattrs.lMaxBaselineExt * 10;
++	if (err1 < 0) err1 = -err1;
++	cerror = err1;
++	
++	if (logfonts[lFontID].fattrs.lAveCharWidth) {
++	    err1 = logfonts[lFontID].fattrs.lAveCharWidth 
++		- os2fonts[i].lAveCharWidth;
++	    if (err1 < 0) err1 = -err1;
++	    cerror += err1 * 3;		/* 10/3 times cheaper. */
++	}
++	if (os2fonts[i].sXDeviceRes != aDevCaps[CAPS_HORIZONTAL_FONT_RES]
++	    || os2fonts[i].sYDeviceRes != aDevCaps[CAPS_VERTICAL_FONT_RES]) {
++	    cerror += 1;
++	}
++	if (cerror < error) {
++	    error = cerror;
++	    best = i;
++	}
++	if (cerror == 0) {
++	    found = TRUE;
++	    font = best;
++	    match = os2fonts[best].lMatch;
++	}
+ #ifdef DEBUG
+             printf("    found bitmap font %s, match %d (size %d)\n",
+                    os2fonts[i].szFacename, os2fonts[i].lMatch,
+                    os2fonts[i].sNominalPointSize);
+-            } else { if (os2fonts[i].sNominalPointSize !=
++            if (os2fonts[i].sNominalPointSize !=
+                     logfonts[lFontID].fattrs.lMaxBaselineExt * 10) {
+                     printf("    height %d doesn't match required %d\n",
+                            os2fonts[i].sNominalPointSize,
+@@ -849,10 +875,16 @@ XLoadFont(display, name)
+                            aDevCaps[CAPS_VERTICAL_FONT_RES]);
+                 }
+ #endif
+-            }
+         }
+     }
+-    /* If no bitmap but an outline found, take it */
++    /* If an exact bitmap for a differenr resolution found, take it */
++    if (!found && error <= 1) {
++        match = os2fonts[best].lMatch;
++	font = best;
++        found = TRUE;
++    }
++
++    /* If no exact bitmap but an outline found, take it */
+     if (!found && outline != -1) {
+         match = os2fonts[outline].lMatch;
+         font = outline;
+@@ -863,8 +895,49 @@ XLoadFont(display, name)
+                os2fonts[font].szFacename, os2fonts[font].lMatch);
+ #endif
+     }
++    /* If no exact bitmap but an approximate found, take it */
++    if (!found && best != -1) {
++        match = os2fonts[best].lMatch;
++	font = best;
++        found = TRUE;
++    }
++
++    if (!found) {
++        FONTMETRICS fm;
++	/* Select default font by making facename empty */
++#ifdef DEBUG
++        printf("    GpiCreateLogFont ERROR %x\n", WinGetLastError(hab));
++        printf("XLoadFont trying default font\n");
++#endif
++        memset(logfonts[lFontID].fattrs.szFacename, '\0', FACESIZE);
++        match = GpiCreateLogFont(globalPS, NULL, lFontID,
++                                &(logfonts[lFontID].fattrs));
++	if (match == GPI_ERROR) {
++	    if (os2fonts)
++	    	ckfree((char *)os2fonts);
++	    return (Font) 0;
++	} else if (match == FONT_DEFAULT) {
++	    rc = GpiQueryFontMetrics(globalPS, sizeof(FONTMETRICS), &fm);
++	    if (!rc)
++		return (Font) 0;
++	    logfonts[lFontID].fattrs.lMatch = 0;
++ 	    strcpy(logfonts[lFontID].fattrs.szFacename, fm.szFacename);
++ 	    logfonts[lFontID].fattrs.idRegistry = fm.idRegistry;
++ 	    logfonts[lFontID].fattrs.usCodePage = fm.usCodePage;
++ 	    logfonts[lFontID].fattrs.lMaxBaselineExt = fm.lMaxBaselineExt;
++ 	    logfonts[lFontID].fattrs.lAveCharWidth = fm.lAveCharWidth;
++ 	    logfonts[lFontID].fattrs.fsType = 0;
++ 	    logfonts[lFontID].fattrs.fsFontUse = 0;
++	    goto got_it;
++	}
++    }
++	
+     /* Fill in the exact font metrics if we found a font */
+-    if (found) {
++    if (!found) {
++	if (os2fonts)
++	    ckfree((char *)os2fonts);
++        return (Font) 0;
++    } else {
+         logfonts[lFontID].fattrs.idRegistry = os2fonts[font].idRegistry;
+         logfonts[lFontID].fattrs.lMatch = match;
+         strcpy(logfonts[lFontID].fattrs.szFacename, os2fonts[font].szFacename);
+@@ -881,6 +954,7 @@ XLoadFont(display, name)
+             logfonts[lFontID].fattrs.lAveCharWidth = os2fonts[font].lAveCharWidth;
+         }
+     }
++  got_it:
+ #ifdef DEBUG
+     printf("    length %d, sel %x, reg %d, cp %d, mbe %d, acw %d, type %x, fu %x\n",
+            logfonts[lFontID].fattrs.usRecordLength,
+@@ -891,8 +965,8 @@ XLoadFont(display, name)
+            logfonts[lFontID].fattrs.lAveCharWidth,
+            logfonts[lFontID].fattrs.fsType, logfonts[lFontID].fattrs.fsFontUse);
+ #endif
+-    match= GpiCreateLogFont(globalPS, NULL, lFontID,
+-                            &(logfonts[lFontID].fattrs));
++    match = GpiCreateLogFont(globalPS, NULL, lFontID,
++                             &(logfonts[lFontID].fattrs));
+     if (match == GPI_ERROR) {
+ 	/* Select default font by making facename empty */
+ #ifdef DEBUG
+@@ -900,16 +974,16 @@ XLoadFont(display, name)
+         printf("XLoadFont trying default font\n");
+ #endif
+         memset(logfonts[lFontID].fattrs.szFacename, '\0', FACESIZE);
+-        match= GpiCreateLogFont(globalPS, NULL, lFontID,
+-                                &(logfonts[lFontID].fattrs));
++        match = GpiCreateLogFont(globalPS, NULL, lFontID,
++                                 &(logfonts[lFontID].fattrs));
+     }
+     /* Scale the font to the right size if outline font */
+     if (logfonts[lFontID].outline) {
+-        rc = TkOS2ScaleFont(globalPS, logfonts[lFontID].pointSize, 0);
++        rc = TkOS2ScaleFont(globalPS, logfonts[lFontID].pixelSize, 0);
+ #ifdef DEBUG
+         if (rc!=TRUE) printf("TkOS2ScaleFont %d ERROR %x\n",
+-                             logfonts[lFontID].pointSize, WinGetLastError(hab));
+-else printf("TkOS2ScaleFont %d OK\n", logfonts[lFontID].pointSize);
++                             logfonts[lFontID].pixelSize, WinGetLastError(hab));
++else printf("TkOS2ScaleFont %d OK\n", logfonts[lFontID].pixelSize);
+         rc = GpiQueryCharBox(globalPS, &charBox);
+         if (rc!=TRUE) printf("GpiQueryCharBox ERROR %x\n");
+         else printf("GpiQueryCharBox OK: now cx %d (%d,%d), cy %d (%d,%d)\n",
+@@ -924,7 +998,8 @@ else printf("TkOS2ScaleFont %d OK\n", lo
+                                "GPI_ERROR"), lFontID);
+ #endif
+     if (match == GPI_ERROR) {
+-        ckfree((char *)os2fonts);
++	if (os2fonts)
++	    ckfree((char *)os2fonts);
+         return (Font) 0;
+     } else {
+ #ifdef DEBUG
+@@ -943,11 +1018,11 @@ else printf("TkOS2ScaleFont %d OK\n", lo
+             }
+         }
+ #endif
+-        ckfree((char *)os2fonts);
++	if (os2fonts)
++	    ckfree((char *)os2fonts);
+         nextLogicalFont++;
+         return (Font) lFontID;
+     }
+-    ckfree((char *)os2fonts);
+ }
+ 
+ /*
+@@ -1007,11 +1082,11 @@ if (rc==FALSE) printf("Error=%x\n", WinG
+     /* If this is an outline font, set the char box */
+     if (logfonts[font_ID].outline) {
+         SIZEF charBox;
+-        rc = TkOS2ScaleFont(globalPS, logfonts[font_ID].pointSize, 0);
++        rc = TkOS2ScaleFont(globalPS, logfonts[font_ID].pixelSize, 0);
+ #ifdef DEBUG
+ if (rc!=TRUE) printf("TkOS2ScaleFont %d ERROR %x\n",
+-                     logfonts[font_ID].pointSize, WinGetLastError(hab));
+-else printf("TkOS2ScaleFont %d OK\n", logfonts[font_ID].pointSize);
++                     logfonts[font_ID].pixelSize, WinGetLastError(hab));
++else printf("TkOS2ScaleFont %d OK\n", logfonts[font_ID].pixelSize);
+         rc = GpiQueryCharBox(globalPS, &charBox);
+ if (rc!=TRUE) printf("GpiQueryCharBox ERROR %x\n");
+ else printf("GpiQueryCharBox OK: now cx %d (%d,%d), cy %d (%d,%d)\n", charBox.cx,
+@@ -1079,65 +1154,19 @@ fm.lMaxCharInc, fm.lMaxAscender, fm.lMax
+              */
+ 	    int nchars = MIN(((int)fm.sLastChar + 1), 255);
+ 	    int minWidth = 30000;
+-POINTL endPoint[2];
+-            PLONG widths;
++	    POINTL endPoint[2];
+ 	    fontPtr->per_char =
+ 		(XCharStruct *)ckalloc(sizeof(XCharStruct) * nchars);
+ 
+-/*
+-            widths = (PLONG) ckalloc(sizeof(LONG)*nchars);
+-            if (widths != NULL) {
+-                rc= GpiQueryWidthTable(globalPS, fm.sFirstChar, nchars, widths);
+-                if (rc == TRUE) {
+-                    for (i = 0; i < nchars ; i++) {
+-                        fontPtr->per_char[i] = bounds;
+-                        if (logfonts[font_ID].fattrs.fsFontUse
+-                            & FATTR_FONTUSE_OUTLINE) {
+-                            fontPtr->per_char[i].width =
+-                                ceil(((float)widths[i] * mult) );
+-#ifdef DEBUG
+-                            printf("    width (outline) [%c] %d -> %d\n",
+-                                   fm.sFirstChar+i, widths[i],
+-                                   fontPtr->per_char[i].width);
+-#endif
+-                        } else {
+-                            fontPtr->per_char[i].width = widths[i];
+-#ifdef DEBUG
+-                            printf("    width (bmp) [%c] %d\n", fm.sFirstChar+i,
+-                                   fontPtr->per_char[i].width);
+-#endif
+-                        }
+-                        if (minWidth > fontPtr->per_char[i].width) {
+-            	            minWidth = fontPtr->per_char[i].width;
+-                        }
+-                    }
+-#ifdef DEBUG
+-                    printf("variable pitch, nchars %d, minWidth %d\n", nchars,
+-                           minWidth);
+-#endif
+-                } else {
+-	            ckfree((char *)fontPtr);
+-                    fontPtr = NULL;
+-#ifdef DEBUG
+-                    printf("    GpiQueryWidthTable %d ERROR %x\n", nchars,
+-                           WinGetLastError(hab));
+-#endif
+-                }
+-            } else {
+-	        ckfree((char *)fontPtr);
+-                fontPtr = NULL;
+-#ifdef DEBUG
+-                printf("    couldn't allocate memory for widths\n");
+-#endif
+-            }
+-*/
+             /*
+              * GpiQueryCharStringPos seems to be more precise than
+              * GpiQueryWidthTable. In the widget demo, the first only exhibits
+              * some "dancing" when highlighting, while the latter gives a very
+              * noticeable space before the cursor.
+              */
+-            for (i = 0, c = fm.sFirstChar; i < nchars ; i++, c++ ) {
++	    /* On the other hand, it is abysmal for raster fonts. */
++	    if (logfonts[font_ID].outline) {
++	      for (i = 0, c = fm.sFirstChar; i < nchars ; i++, c++ ) {
+                 GpiQueryCharStringPos(globalPS, 0L, 1, &c, NULL, endPoint);
+                 fontPtr->per_char[i] = bounds;
+                 fontPtr->per_char[i].width = endPoint[1].x - endPoint[0].x;
+@@ -1149,7 +1178,59 @@ POINTL endPoint[2];
+                 if (minWidth > fontPtr->per_char[i].width) {
+                     minWidth = fontPtr->per_char[i].width;
+                 }
+-            }
++	      }
++	    } else {
++		PLONG widths = (PLONG) ckalloc(sizeof(LONG)*nchars);
++		if (widths != NULL) {
++		    rc = GpiQueryWidthTable(globalPS, fm.sFirstChar, nchars, widths);
++		    if (rc == TRUE) {
++			for (i = 0; i < nchars ; i++) {
++			    fontPtr->per_char[i] = bounds;
++#if 0
++			    if (logfonts[font_ID].fattrs.fsFontUse
++				& FATTR_FONTUSE_OUTLINE) {
++				fontPtr->per_char[i].width =
++				    ceil(((float)widths[i] * mult) );
++#ifdef DEBUG
++				printf("    width (outline) [%c] %d -> %d\n",
++				       fm.sFirstChar+i, widths[i],
++				       fontPtr->per_char[i].width);
++#endif
++			    } else 
++#endif /* 0 */
++			    {
++				fontPtr->per_char[i].width = widths[i];
++#ifdef DEBUG
++				printf("    width (bmp) [%c] %d\n", fm.sFirstChar+i,
++				       fontPtr->per_char[i].width);
++#endif
++			    }
++			    if (minWidth > fontPtr->per_char[i].width) {
++				minWidth = fontPtr->per_char[i].width;
++			    }
++			}
++#ifdef DEBUG
++			printf("variable pitch, nchars %d, minWidth %d\n", nchars,
++			       minWidth);
++#endif
++		    } else {
++			ckfree((char *)fontPtr);
++			fontPtr = NULL;
++#ifdef DEBUG
++			printf("    GpiQueryWidthTable %d ERROR %x\n", nchars,
++			       WinGetLastError(hab));
++#endif
++		    }
++		} else {
++		    ckfree((char *)fontPtr);
++		    fontPtr = NULL;
++#ifdef DEBUG
++		    printf("    couldn't allocate memory for widths\n");
++#endif
++		    goto restore;
++		}
++		
++	    }
+ 
+ 	    fontPtr->min_bounds.width = minWidth;
+ 	} else {
+@@ -1160,6 +1241,7 @@ POINTL endPoint[2];
+ 	fontPtr = NULL;
+     }    
+ 
++  restore:
+     /* Restore font */
+     if (logfonts[(LONG)fontPtr->fid].setShear) {
+         GpiSetCharShear(globalPS, &noShear);
+@@ -1282,12 +1364,12 @@ XTextWidth(font_struct, string, count)
+     if (logfonts[(LONG)font_struct->fid].outline) {
+         SIZEF charBox;
+         rc = TkOS2ScaleFont(globalPS,
+-                            logfonts[(LONG)font_struct->fid].pointSize, 0);
++                            logfonts[(LONG)font_struct->fid].pixelSize, 0);
+ #ifdef DEBUG
+ if (rc!=TRUE) printf("TkOS2ScaleFont %d ERROR %x\n",
+-                     logfonts[(LONG)font_struct->fid].pointSize,
++                     logfonts[(LONG)font_struct->fid].pixelSize,
+                      WinGetLastError(hab));
+-else printf("TkOS2ScaleFont %d OK\n", logfonts[(LONG)font_struct->fid].pointSize);
++else printf("TkOS2ScaleFont %d OK\n", logfonts[(LONG)font_struct->fid].pixelSize);
+         rc = GpiQueryCharBox(globalPS, &charBox);
+ if (rc!=TRUE) printf("GpiQueryCharBox ERROR %x\n");
+ else printf("GpiQueryCharBox OK: now cx %d (%d,%d), cy %d (%d,%d)\n", charBox.cx,
+@@ -1367,12 +1449,12 @@ printf("XTextExtents\n");
+     if (logfonts[(LONG)font_struct->fid].outline) {
+         SIZEF charBox;
+         rc = TkOS2ScaleFont(globalPS,
+-                            logfonts[(LONG)font_struct->fid].pointSize, 0);
++                            logfonts[(LONG)font_struct->fid].pixelSize, 0);
+ #ifdef DEBUG
+ if (rc!=TRUE) printf("TkOS2ScaleFont %d ERROR %x\n",
+-                     logfonts[(LONG)font_struct->fid].pointSize,
++                     logfonts[(LONG)font_struct->fid].pixelSize,
+                      WinGetLastError(hab));
+-else printf("TkOS2ScaleFont %d OK\n", logfonts[(LONG)font_struct->fid].pointSize);
++else printf("TkOS2ScaleFont %d OK\n", logfonts[(LONG)font_struct->fid].pixelSize);
+         rc = GpiQueryCharBox(globalPS, &charBox);
+ if (rc!=TRUE) printf("GpiQueryCharBox ERROR %x\n", WinGetLastError(hab));
+ else printf("GpiQueryCharBox OK: now cx %d (%d,%d), cy %d (%d,%d)\n", charBox.cx,
+@@ -1538,10 +1620,10 @@ printf("XGetFontProperty %d\n", (LONG)at
+  */
+ 
+ BOOL
+-TkOS2ScaleFont(hps, pointSize, pointWidth)
++TkOS2ScaleFont(hps, pixelSize, pixelWidth)
+     HPS hps;
+-    ULONG pointSize;	/* in decipoints */
+-    ULONG pointWidth;	/* 0 means "same as pointSize" */
++    ULONG pixelSize;	/* in decipoints */
++    ULONG pixelWidth;	/* 0 means "same as pixelSize" */
+ {
+     HDC hdc;
+     LONG xRes, yRes;
+@@ -1549,19 +1631,22 @@ TkOS2ScaleFont(hps, pointSize, pointWidt
+     SIZEF sizef;
+ 
+ #ifdef DEBUG
+-    printf("TkOS2ScaleFont hps %x, pointSize %d, pointWidth %d\n", hps,
+-           pointSize, pointWidth);
++    printf("TkOS2ScaleFont hps %x, pixelSize %d, pixelWidth %d\n", hps,
++           pixelSize, pixelWidth);
+     rc = GpiQueryCharBox(hps, &sizef);
+     if (rc!=TRUE) printf("GpiQueryCharBox ERROR %x\n", WinGetLastError(hab));
+     else printf("GpiQueryCharBox OK: cx %d (%d,%d), cy %d (%d,%d)\n", sizef.cx,
+                 FIXEDINT(sizef.cx), FIXEDFRAC(sizef.cx), sizef.cy,
+                 FIXEDINT(sizef.cy), FIXEDFRAC(sizef.cy));
+ #endif
+-    /* If pointWidth defaulted, set it to pointSize */
+-    if (pointWidth == 0) {
+-        pointWidth = pointSize;
++    /* If pixelWidth defaulted, set it to pixelSize */
++    if (pixelWidth == 0) {
++        pixelWidth = pixelSize;
+     }
+ 
++    /* We keep the data in pixels, so we do not need to recalculate. */
++#ifdef 0
++
+     /* Determine device and its resolutions */
+     hdc = GpiQueryDevice(hps);
+     if (hdc == HDC_ERROR) {
+@@ -1606,8 +1691,8 @@ TkOS2ScaleFont(hps, pointSize, pointWidt
+      */
+     points[0].x = 0;
+     points[0].y = 0;
+-    points[1].x = (xRes * pointWidth + 361.409) / 722.818;
+-    points[1].y = (yRes * pointSize + 361.409) / 722.818;
++    points[1].x = (xRes * pixelWidth + 361.409) / 722.818;
++    points[1].y = (yRes * pixelSize + 361.409) / 722.818;
+ 
+     /* Convert to page coordinates */
+ /*
+@@ -1616,8 +1701,8 @@ TkOS2ScaleFont(hps, pointSize, pointWidt
+ #ifdef DEBUG
+     if (rc!=TRUE) printf("GpiConvert ERROR %x\n", WinGetLastError(hab));
+     else printf("GpiConvert OK: (%d,%d) -> (%d,%d)\n",
+-                (aDevCaps[CAPS_HORIZONTAL_FONT_RES] * pointWidth + 360) / 720,
+-                (aDevCaps[CAPS_VERTICAL_FONT_RES] * pointSize + 360) / 720,
++                (aDevCaps[CAPS_HORIZONTAL_FONT_RES] * pixelWidth + 360) / 720,
++                (aDevCaps[CAPS_VERTICAL_FONT_RES] * pixelSize + 360) / 720,
+                 points[1].x, points[1].y);
+ #endif
+ 
+@@ -1628,6 +1713,10 @@ TkOS2ScaleFont(hps, pointSize, pointWidt
+     printf("after GpiConvert: cx FIXED(%d), cy FIXED(%d)\n",
+            points[1].x - points[0].x, points[1].y - points[0].y);
+ #endif
++#else  /* !0 */
++    sizef.cx = MAKEFIXED((pixelWidth + 5)/10, 0);
++    sizef.cy = MAKEFIXED((pixelSize + 5)/10, 0);
++#endif /* !0 */
+ 
+     return GpiSetCharBox(hps, &sizef);
+ }
+diff -pru H:\get\illya.vaes4\tk4.1\os2.my/tkOS2Int.h os2/tkOS2Int.h
+--- H:/get/illya.vaes4/tk4.1/os2.my/tkOS2Int.h	Sun Jun 22 19:50:24 1997
++++ os2/tkOS2Int.h	Tue Jun 24 19:25:50 1997
+@@ -344,7 +357,7 @@ typedef struct {
+     POINTL shear;	/* Shear (angle) of characters, GpiSetCharShear */
+     BOOL setShear;	/* Should shear be changed after GpiCreateLogFont? */
+     BOOL outline;	/* Is this an outline font */
+-    ULONG pointSize;	/* Pointsize for outline font, in decipoints */
++    ULONG pixelSize;	/* Pixelsize for outline font, in decipixels. */
+     FONTMETRICS fm;	/* Fontmetrics, for concentrating outline font stuff */
+ } TkOS2Font;
+ 

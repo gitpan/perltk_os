@@ -1,0 +1,757 @@
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/generic/tkBind.c Tk402.001.pm/pTk/mTk/generic/tkBind.c
+--- Tk402.001/pTk/mTk/generic/tkBind.c	Fri May  2 08:20:38 1997
++++ Tk402.001.pm/pTk/mTk/generic/tkBind.c	Thu Jun 19 08:25:42 1997
+@@ -1904,6 +1904,9 @@ MatchPatterns(dispPtr, bindPtr, psPtr, b
+     return bestPtr;
+ }
+ 
++#ifdef __OPEN32__
++extern char StashedKey;
++#endif 
+ /*
+  *--------------------------------------------------------------
+  *
+@@ -4053,6 +4056,11 @@ InitKeymapInfo(dispPtr)
+     KeyCode *codePtr;
+     KeySym keysym;
+     int count, i, j, max, arraySize;
++#ifdef __OPEN32__
++    char oldStashed = StashedKey;
++    
++    StashedKey = 0;
++#endif 
+ #define KEYCODE_ARRAY_SIZE 20
+ 
+     dispPtr->bindInfoStale = 0;
+@@ -4153,6 +4161,9 @@ InitKeymapInfo(dispPtr)
+ 	nextModCode: continue;
+     }
+     XFreeModifiermap(modMapPtr);
++#ifdef __OPEN32__
++    StashedKey = oldStashed;
++#endif 
+ }
+ 
+ 
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/generic/tkPort.h Tk402.001.pm/pTk/mTk/generic/tkPort.h
+--- Tk402.001/pTk/mTk/generic/tkPort.h	Thu Jun  5 11:22:34 1997
++++ Tk402.001.pm/pTk/mTk/generic/tkPort.h	Thu Jun 19 14:10:30 1997
+@@ -26,12 +26,18 @@
+ 
+ #if defined(__WIN32__) || defined(_WIN32)
+ #   include "tkWinPort.h"
+-#define strcasecmp(a,b) stricmp(a,b)
++#   ifndef strcasecmp
++#       define strcasecmp(a,b) stricmp(a,b)
++#   endif
+ #else
+ #   if defined(MAC_TCL)
+ #	include "tkMacPort.h"
+ #   else
+-#	include "tkUnixPort.h"
++#       ifdef __PM__
++#           include "tkOS2Port.h"
++#       else
++#           include "tkUnixPort.h"
++#       endif
+ #   endif
+ #endif
+ 
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/tclGeneric/tclEvent.c Tk402.001.pm/pTk/mTk/tclGeneric/tclEvent.c
+--- Tk402.001/pTk/mTk/tclGeneric/tclEvent.c	Tue Mar 18 01:21:16 1997
++++ Tk402.001.pm/pTk/mTk/tclGeneric/tclEvent.c	Thu Jun 19 08:25:42 1997
+@@ -21,6 +21,11 @@
+ #include "tkInt.h"
+ #include "Lang.h"
+ 
++#ifdef OS2
++#  include <sys/ioctl.h>
++#  include <sys/termio.h>
++#endif 
++
+ /*
+  * For each file registered in a call to Tcl_CreateFileHandler,
+  * there is one record of the following type.  All of these records
+@@ -373,6 +378,24 @@ Tcl_CreateFileHandler(file, mask, proc, 
+     } else {
+ 	filePtr->clientData = (ClientData) LangCopyCallback((LangCallback *) clientData);
+     }
++#ifdef OS2
++    {
++/*	FileHandle *handlePtr = (FileHandle *) handle;
++	int fd = handlePtr->key.osHandle;
++*/
++	int type;
++	int fd = (int)Tcl_GetFileInfo(file, &type);
++	struct termio tio;
++
++	if (!isatty(fd)) 
++	    return;
++	ioctl(fd, TCGETA, &tio);
++	tio.c_lflag &= ~(IDEFAULT | ICANON);
++	
++	ioctl(fd, TCSETA, &tio);
++    }
++#endif 
++
+ }
+ 
+ /*
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/tclUnix/tclUnixNotfy.c Tk402.001.pm/pTk/mTk/tclUnix/tclUnixNotfy.c
+--- Tk402.001/pTk/mTk/tclUnix/tclUnixNotfy.c	Thu Jun  5 11:22:36 1997
++++ Tk402.001.pm/pTk/mTk/tclUnix/tclUnixNotfy.c	Thu Jun 19 14:12:00 1997
+@@ -21,6 +21,11 @@
+ #include <sys/select.h>
+ #endif
+ 
++#ifdef __EMX__
++#   include <sys/select.h>
++#   include <sys/time.h>
++#endif
++
+ #ifndef MASK_SIZE
+ #define MASK_SIZE 256
+ #endif
+@@ -169,6 +174,10 @@ Tcl_FileReady(file, mask)
+     return result;
+ }
+ 
++#if defined(__EMX__) && (defined(__WIN32__) || defined(__PM__))
++/* Backdoor into processing of events when from Tk. */
++int (*Tcl_WaitForEventProc)(int, fd_mask *, Tcl_Time *) = NULL;
++#endif
+ /*
+  *----------------------------------------------------------------------
+  *
+@@ -242,7 +251,11 @@ Tcl_WaitForEvent(timePtr)
+     memcpy((VOID *) readyMasks, (VOID *) checkMasks,
+ 	    3*MASK_SIZE*sizeof(fd_mask));
+     if (timePtr == NULL) {
++#if defined(__EMX__) && (defined(__WIN32__) || defined(__PM__))
++	if (((numFdBits == 0) || (MaskEmpty((long *) readyMasks))) && !Tcl_WaitForEventProc) {
++#else
+ 	if ((numFdBits == 0) || (MaskEmpty((long *) readyMasks))) {
++#endif
+ 	    return TCL_ERROR;
+ 	}
+ 	timeoutPtr = NULL;
+@@ -251,6 +264,11 @@ Tcl_WaitForEvent(timePtr)
+ 	timeout.tv_sec = timePtr->sec;
+ 	timeout.tv_usec = timePtr->usec;
+     }
++#if defined(__EMX__) && (defined(__WIN32__) || defined(__PM__))
++    if (Tcl_WaitForEventProc) {
++	numFound = (*Tcl_WaitForEventProc)(numFdBits, readyMasks, timePtr);
++    } else
++#endif
+     numFound = select(numFdBits, (SELECT_MASK *) &readyMasks[0],
+ 	    (SELECT_MASK *) &readyMasks[MASK_SIZE],
+ 	    (SELECT_MASK *) &readyMasks[2*MASK_SIZE], timeoutPtr);
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/tclUnix/tclUnixTime.c Tk402.001.pm/pTk/mTk/tclUnix/tclUnixTime.c
+--- Tk402.001/pTk/mTk/tclUnix/tclUnixTime.c	Thu Jun  5 11:22:36 1997
++++ Tk402.001.pm/pTk/mTk/tclUnix/tclUnixTime.c	Thu Jun 19 08:25:44 1997
+@@ -15,6 +15,10 @@
+ #include "tkPort.h"
+ #include "Lang.h"
+ 
++#ifdef __EMX__
++#   include <sys/time.h>
++#endif
++
+ #ifdef TIMEOFDAY_NO_TZ
+ #define Tk_timeofday(x) gettimeofday(x)
+  extern int gettimeofday _ANSI_ARGS_((struct timeval *tp));
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/tixGeneric/tixPort.h Tk402.001.pm/pTk/mTk/tixGeneric/tixPort.h
+--- Tk402.001/pTk/mTk/tixGeneric/tixPort.h	Thu May 29 10:52:00 1997
++++ Tk402.001.pm/pTk/mTk/tixGeneric/tixPort.h	Thu Jun 19 15:53:34 1997
+@@ -26,7 +26,7 @@
+ #include "tk.h"
+ #endif
+ 
+-#if (!defined(__WIN32__)) && (!defined(_WIN32)) && (!defined(MAC_TCL))
++#if (!defined(__WIN32__)) && (!defined(_WIN32)) && (!defined(MAC_TCL)) && (!defined(__PM__))
+     /*
+      * The Tcl/Tk porting stuff is needed only in Unix.
+      */
+@@ -40,7 +40,7 @@
+ #endif
+ 
+ 
+-#if defined(WIN32) || defined(_WIN32)
++#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__PM__)
+ #   include "tixWinPort.h"
+ #else
+ #   if defined(MAC_TCL)
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/tixWin/tixWinDraw.c Tk402.001.pm/pTk/mTk/tixWin/tixWinDraw.c
+--- Tk402.001/pTk/mTk/tixWin/tixWinDraw.c	Wed May 28 09:37:50 1997
++++ Tk402.001.pm/pTk/mTk/tixWin/tixWinDraw.c	Sat Jun 21 02:05:04 1997
+@@ -11,7 +11,12 @@
+  */
+ 
+ #include <tkInt.h>
+-#include <tkWinInt.h>
++#ifdef __PM__
++#    define __PM_WIN__
++#    include <tkOS2Int.h>
++#else
++#    include <tkWinInt.h>
++#endif
+ #include "tixInt.h"
+ #include "tixPort.h"
+ 
+@@ -36,6 +41,9 @@ TixpDrawTmpLine(x1, y1, x2, y2, tkwin)
+     int y2;
+     Tk_Window tkwin;
+ {
++#ifdef __PM__
++    panic("Not implemented: TixpDrawTmpLine");
++#else
+     HWND desktop;
+     HDC hdc;
+     HPEN hpen;
+@@ -54,6 +62,7 @@ TixpDrawTmpLine(x1, y1, x2, y2, tkwin)
+     SelectObject(hdc, old);
+     DeleteObject(hpen);
+     ReleaseDC(desktop, hdc);	
++#endif
+ }
+ 
+ /*----------------------------------------------------------------------
+@@ -73,6 +82,9 @@ TixpDrawAnchorLines(display, drawable, g
+     int w;
+     int h;
+ {
++#ifdef __PM__
++    panic("Not implemented: TixpDrawAnchorLines");
++#else
+     HDC hdc;
+     TkWinDCState state;
+     HPEN hpen;
+@@ -92,6 +104,7 @@ TixpDrawAnchorLines(display, drawable, g
+     DeleteObject(hpen);
+ 
+     TkWinReleaseDrawableDC(drawable, hdc, &state);
++#endif
+ }
+ 
+ /*----------------------------------------------------------------------
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/tixWin/tixWinPort.h Tk402.001.pm/pTk/mTk/tixWin/tixWinPort.h
+--- Tk402.001/pTk/mTk/tixWin/tixWinPort.h	Thu Jun 12 09:44:26 1997
++++ Tk402.001.pm/pTk/mTk/tixWin/tixWinPort.h	Thu Jun 19 15:46:10 1997
+@@ -28,7 +28,9 @@
+ #include <fcntl.h>
+ 
+ #define WIN32_LEAN_AND_MEAN
+-#include <windows.h>
++#    ifndef __PM__
++#         include <windows.h>
++#    endif
+ #undef WIN32_LEAN_AND_MEAN
+ 
+ struct _TixpSubRegion {
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/tixWin/tixWinXpm.c Tk402.001.pm/pTk/mTk/tixWin/tixWinXpm.c
+--- Tk402.001/pTk/mTk/tixWin/tixWinXpm.c	Fri May 30 08:40:28 1997
++++ Tk402.001.pm/pTk/mTk/tixWin/tixWinXpm.c	Tue Jun 24 21:28:26 1997
+@@ -12,7 +12,12 @@
+  */
+ 
+ #include <tkInt.h>
+-#include <tkWinInt.h>
++#ifdef __PM__
++#    define __PM_WIN__
++#    include <tkOS2Int.h>
++#else
++#    include <tkWinInt.h>
++#endif
+ #include "tix.h"
+ #include "tixImgXpm.h"
+ 
+@@ -169,6 +174,9 @@ TixpXpmSetPixel(instancePtr, image, mask
+     }
+ }
+ 
++#ifndef __PM__				/* These functions for PM are
++					   implemented elsewhere. */
++
+ /*----------------------------------------------------------------------
+  * TixpXpmRealizePixmap --
+  *
+@@ -233,7 +241,7 @@ TixpXpmFreeInstanceData(instancePtr, del
+     int delete;				/* Should the instance data structure
+ 					 * be deleted as well? */
+ {
+-    PixmapData *dataPtr = (PixmapData*)instancePtr->clientData;
++    PixmapData *dataPtr = (PixmapData*)instancePtr->clientData;    
+ 
+     if (dataPtr->maskDC != NULL) {
+ 	DeleteObject(SelectObject(dataPtr->maskDC,
+@@ -291,8 +299,6 @@ CopyTransparent(display, srcDC, dest, sr
+     HDC destDC;
+     TkWinDCState destState;
+ 
+-    destDC = TkWinGetDrawableDC(display, dest, &destState);
+-
+     if (maskDC) {
+ 	BitBlt(destDC, dest_x, dest_y, width, height, maskDC, src_x, src_y,
+ 	    SRCAND);
+@@ -305,4 +311,5 @@ CopyTransparent(display, srcDC, dest, sr
+ 
+     TkWinReleaseDrawableDC(dest, destDC, &destState);
+ }
++#endif
+ 
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinClipboard.c Tk402.001.pm/pTk/mTk/win/tkWinClipboard.c
+--- Tk402.001/pTk/mTk/win/tkWinClipboard.c	Sun Mar 23 07:30:14 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinClipboard.c	Thu Jun 19 08:25:44 1997
+@@ -55,7 +55,12 @@ TkSelGetSelection(interp, tkwin, selecti
+ 
+     if ((selection == Tk_InternAtom(tkwin, "CLIPBOARD"))
+ 	    && (target == XA_STRING)) {
+-	if (OpenClipboard(NULL)) {
++#ifdef __OPEN32__
++	if (OpenClipboard(tmpParent))
++#else
++	if (OpenClipboard(NULL))
++#endif
++	{
+ 	    handle = GetClipboardData(CF_TEXT);
+ 	    if (handle != NULL) {
+ 		data = GlobalLock(handle);
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinColor.c Tk402.001.pm/pTk/mTk/win/tkWinColor.c
+--- Tk402.001/pTk/mTk/win/tkWinColor.c	Tue Jun  3 09:55:52 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinColor.c	Thu Jun 19 09:54:20 1997
+@@ -157,6 +157,9 @@ InitColorTable()
+     XColorEntry *colorPtr;
+     Tcl_HashEntry *hPtr;
+     int dummy;
++#ifdef __OPEN32__
++    char tmpclr[64];
++#endif
+ 
+     Tcl_InitHashTable(&colorTable, TCL_STRING_KEYS);
+ 
+@@ -165,8 +168,14 @@ InitColorTable()
+      */
+ 
+     for (colorPtr = xColors; colorPtr->name != NULL; colorPtr++) {
++#ifdef __OPEN32__
++	strcpy(tmpclr,colorPtr->name);
++        hPtr = Tcl_CreateHashEntry(&colorTable, strlwr(tmpclr),
++		&dummy);
++#else
+         hPtr = Tcl_CreateHashEntry(&colorTable, strlwr(colorPtr->name),
+ 		&dummy);
++#endif
+         Tcl_SetHashValue(hPtr, colorPtr);
+     }
+     
+@@ -176,8 +185,14 @@ InitColorTable()
+ 
+     SetSystemColors();
+     for (colorPtr = sysColors; colorPtr->name != NULL; colorPtr++) {
++#ifdef __OPEN32__
++	strcpy(tmpclr,colorPtr->name);
++        hPtr = Tcl_CreateHashEntry(&colorTable, strlwr(tmpclr),
++		&dummy);
++#else
+         hPtr = Tcl_CreateHashEntry(&colorTable, strlwr(colorPtr->name),
+ 		&dummy);
++#endif
+         Tcl_SetHashValue(hPtr, colorPtr);
+     }
+ 
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinCursor.c Tk402.001.pm/pTk/mTk/win/tkWinCursor.c
+--- Tk402.001/pTk/mTk/win/tkWinCursor.c	Sun Mar 23 07:30:14 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinCursor.c	Thu Jun 19 08:25:44 1997
+@@ -105,7 +105,11 @@ TkGetCursorByName(interp, tkwin, arg)
+ 	cursorPtr->winCursor = LoadCursor(NULL, namePtr->id);
+ 	cursorPtr->system = 1;
+     } else {
++#ifdef __OPEN32__
++	cursorPtr->winCursor = os2LoadCursor(TkWinGetTkModule(), string);
++#else
+ 	cursorPtr->winCursor = LoadCursor(TkWinGetTkModule(), string);
++#endif
+ 	cursorPtr->system = 0;
+     }
+     if (cursorPtr->winCursor == NULL) {
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinDialog.c Tk402.001.pm/pTk/mTk/win/tkWinDialog.c
+--- Tk402.001/pTk/mTk/win/tkWinDialog.c	Sun Mar 23 07:30:14 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinDialog.c	Thu Jun 19 08:25:44 1997
+@@ -15,9 +15,11 @@
+ #include "tkWinInt.h"
+ #include "tkFileFilter.h"
+ 
++#ifndef __OPEN32__
+ #include <commdlg.h>    /* includes common dialog functionality */
+ #include <dlgs.h>       /* includes common dialog template defines */
+ #include <cderr.h>      /* includes the common dialog error codes */
++#endif
+ 
+ #if ((TK_MAJOR_VERSION == 4) && (TK_MINOR_VERSION <= 2))
+ /*
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinFont.c Tk402.001.pm/pTk/mTk/win/tkWinFont.c
+--- Tk402.001/pTk/mTk/win/tkWinFont.c	Sun Mar 23 07:30:14 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinFont.c	Thu Jun 19 08:25:44 1997
+@@ -25,6 +25,10 @@ static int		XNameToFont _ANSI_ARGS_((_Xc
+ 			    LOGFONT *logfont));
+ static int		HasWhiteSpace _ANSI_ARGS_((_Xconst char *name));
+ 
++#ifdef __OPEN32__
++static char *lastname;
++#endif
++
+ static int
+ HasWhiteSpace(name)
+ _Xconst char *name;
+@@ -97,6 +101,10 @@ NameToFont(name, logfont)
+ 	logfont->lfCharSet = SYMBOL_CHARSET;
+     } else if (stricmp(logfont->lfFaceName, "WingDings") == 0) {
+ 	logfont->lfCharSet = SYMBOL_CHARSET;
++#ifdef __OPEN32__
++    } else if (stricmp(logfont->lfFaceName, "Symbol Set") == 0) {
++	logfont->lfCharSet = SYMBOL_CHARSET;
++#endif
+     }
+ 	
+     /*
+@@ -285,6 +293,10 @@ XNameToFont(name, logfont)
+ 	    logfont->lfCharSet = SYMBOL_CHARSET;
+ 	} else if (stricmp(logfont->lfFaceName, "WingDings") == 0) {
+ 	    logfont->lfCharSet = SYMBOL_CHARSET;
++#ifdef __OPEN32__
++	} else if (stricmp(logfont->lfFaceName, "Symbol Set") == 0) {
++	    logfont->lfCharSet = SYMBOL_CHARSET;
++#endif
+ 	}
+     }
+ 
+@@ -399,6 +411,15 @@ XNameToFont(name, logfont)
+     return TRUE;
+ }
+ 
++#ifdef __OPEN32__
++static int
++myProc(LOGFONT *pLogFont, TEXTMETRIC *pTM, int iFT, LPARAM userData)
++{
++    LOGFONT *input = (LOGFONT*)userData;
++    *input = *pLogFont;
++    return 0;
++}
++#endif
+ /*
+  *----------------------------------------------------------------------
+  *
+@@ -444,8 +465,18 @@ XLoadFont(display, name)
+ 	    object = DEVICE_DEFAULT_FONT;
+ 	} else if (stricmp(name, "oemfixed") == 0) {
+ 	    object = OEM_FIXED_FONT;
++#ifdef __OPEN32__
++	} else {
++	    HDC dc = GetDC(NULL);
++	    
++	    EnumFonts(dc, name, myProc, (LPARAM)&logfont);
++	    ReleaseDC(NULL, dc);
++	    font = CreateFontIndirect(&logfont);
++	    goto havefont;
++#endif
+ 	}
+ 	font = GetStockObject(object);
++      havefont:
+     }
+     if (font == NULL) {
+ 	font = GetStockObject(SYSTEM_FONT);
+@@ -500,6 +531,11 @@ XQueryFont(display, font_ID)
+ 	fontPtr->max_byte1 = 0;
+ 	fontPtr->min_char_or_byte2 = tm.tmFirstChar;
+ 	fontPtr->max_char_or_byte2 = tm.tmLastChar;
++#ifdef __OPEN32__
++	if (strstr(lastname,"Symbol") && tm.tmLastChar == 126) {
++	    fontPtr->max_char_or_byte2 = 254;
++	}
++#endif
+ 	fontPtr->all_chars_exist = True;
+ 	fontPtr->default_char = tm.tmDefaultChar;
+ 	fontPtr->n_properties = 0;
+@@ -522,7 +558,11 @@ XQueryFont(display, font_ID)
+ 
+ 	if (tm.tmAveCharWidth != tm.tmMaxCharWidth) {
+ 	    int i;
++#ifdef __OPEN32__
++	    int nchars = fontPtr->max_char_or_byte2 - tm.tmFirstChar + 1;
++#else
+ 	    int nchars = tm.tmLastChar - tm.tmFirstChar + 1;
++#endif
+ 	    int minWidth = 30000;
+ 
+ 	    fontPtr->per_char =
+@@ -546,7 +586,11 @@ XQueryFont(display, font_ID)
+ 	    } else {
+ 		int *chars = (int *)ckalloc(sizeof(int) * nchars);
+ 
++#ifdef __OPEN32__
++		GetCharWidth(dc, tm.tmFirstChar, fontPtr->max_char_or_byte2, chars);
++#else
+ 		GetCharWidth(dc, tm.tmFirstChar, tm.tmLastChar, chars);
++#endif
+ 
+ 		for (i = 0; i < nchars ; i++ ) {
+ 		    fontPtr->per_char[i] = bounds;
+@@ -596,6 +640,10 @@ XLoadQueryFont(display, name)
+     _Xconst char* name;
+ {
+     Font font;
++
++#ifdef __OPEN32__
++    lastname = name;
++#endif
+     font = XLoadFont(display, name);
+     return XQueryFont(display, font);
+ }
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinImage.c Tk402.001.pm/pTk/mTk/win/tkWinImage.c
+--- Tk402.001/pTk/mTk/win/tkWinImage.c	Thu Mar 27 10:32:30 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinImage.c	Thu Jun 19 08:25:44 1997
+@@ -105,6 +105,8 @@ ImgDestroy(image)
+ XImage *image;
+ {
+     if (image) {
++	if (image->data)
++	    ckfree(image->data);
+ 	ckfree(image);
+     }
+     return 0;
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinPort.h Tk402.001.pm/pTk/mTk/win/tkWinPort.h
+--- Tk402.001/pTk/mTk/win/tkWinPort.h	Fri Jun  6 09:18:12 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinPort.h	Thu Jun 19 08:25:44 1997
+@@ -31,6 +31,9 @@
+ #include <limits.h>
+ #include <fcntl.h>
+ #include <io.h>
++#ifdef __EMX__
++#   include <sys/types.h>
++#endif
+ #include <sys/stat.h>
+ #include <sys/timeb.h>
+ #include <time.h>
+@@ -39,7 +42,11 @@
+ #    define strncasecmp strnicmp
+ #    define hypot _hypot
+ #else /* _MSC_VER */
+-#    define strncasecmp strncmpi
++#    ifdef __EMX__
++#        define strncasecmp strnicmp
++#    else
++#        define strncasecmp strncmpi
++#    endif
+ #endif /* _MSC_VER */
+ 
+ #define NBBY 8
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinWindow.c Tk402.001.pm/pTk/mTk/win/tkWinWindow.c
+--- Tk402.001/pTk/mTk/win/tkWinWindow.c	Thu May 29 11:20:18 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinWindow.c	Thu Jun 19 08:25:44 1997
+@@ -62,8 +62,22 @@ TkMakeWindow(winPtr, parent)
+ 	parentWin = TkWinGetHWND(parent);
+ 	style = WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+     } else {
++#ifdef __OPEN32__
++	/* Open32 treats topmost windows specially, so we keep any
++	   window as not a toplevel. */
++	if (tmpParent == NULL) {
++	    tmpParent = CreateWindow(TK_WIN_CHILD_CLASS_NAME, "", WS_POPUP,
++				     0, 0,
++				     0, 0,
++				     NULL, NULL, TkWinGetAppInstance(), NULL);
++	    ShowWindow(tmpParent, SW_HIDE);
++	}
++	parentWin = tmpParent;
++	style = WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
++#else
+ 	parentWin = NULL;
+ 	style = WS_POPUP | WS_CLIPCHILDREN;
++#endif
+     }
+ 
+     twdPtr->window.handle = CreateWindow(TK_WIN_CHILD_CLASS_NAME, "", style,
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinWm.c Tk402.001.pm/pTk/mTk/win/tkWinWm.c
+--- Tk402.001/pTk/mTk/win/tkWinWm.c	Tue Mar 25 10:55:00 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinWm.c	Thu Jun 19 08:25:44 1997
+@@ -666,6 +666,31 @@ TkWmMapWindow(winPtr)
+ 		WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS);
+ 	SetParent(child, window);
+ 
++#ifdef __OPEN32__
++	{
++	    static int tmpParentMoved;
++	    if (!tmpParentMoved) {
++		tmpParentMoved = 1;
++/* 		DestroyWindow(tmpParent);  */
++		tmpParent = window; 
++	    }
++	}
++/* The window was created "without" a parent, so due to differences
++   in window origin it is created, say, at position 0 x 768 instead of 0 x 0.
++   Anyway, it looks like some event is missing here.
++ */
++
++	MoveWindow(child, 0, 0, 
++		       winPtr->changes.width, winPtr->changes.height, TRUE);
++	if (!(wmPtr->sizeHintsFlags & (USPosition | PPosition))) {
++	    RECT r;
++	    GetWindowRect(window, &r);
++	    wmPtr->flags &= ~(WM_NEGATIVE_X | WM_NEGATIVE_Y);
++	    wmPtr->x = winPtr->changes.x = r.left;
++	    wmPtr->y = winPtr->changes.y = r.top;
++	}
++#endif
++
+ 	/*
+ 	 * Generate a reparent event.
+ 	 */
+@@ -2412,6 +2437,10 @@ UpdateGeometryInfo(clientData)
+ 		    width + wmPtr->borderWidth,
+ 		    height + wmPtr->borderHeight, TRUE);
+ 	    wmPtr->flags &= ~WM_SYNC_PENDING;
++#ifdef __OPEN32__
++	    MoveWindow(TkWinGetHWND(winPtr->window), 0, 0, 
++		       width, height, TRUE);
++#endif
+ 	} else {
+ 	    winPtr->changes.x = x;
+ 	    winPtr->changes.y = y;
+diff -pru -x *.m -x *.t Tk402.001/pTk/mTk/win/tkWinX.c Tk402.001.pm/pTk/mTk/win/tkWinX.c
+--- Tk402.001/pTk/mTk/win/tkWinX.c	Tue Mar 25 10:53:14 1997
++++ Tk402.001.pm/pTk/mTk/win/tkWinX.c	Thu Jun 19 08:25:44 1997
+@@ -186,7 +186,11 @@ TkWinXInit(hInstance)
+ 
+     class.lpszClassName = TK_WIN_TOPLEVEL_CLASS_NAME;
+     class.lpfnWndProc = TkWinTopLevelProc;
++#ifdef __OPEN32__
++    class.hIcon = os2LoadIcon(TkWinGetTkModule(), "tk");
++#else
+     class.hIcon = LoadIcon(TkWinGetTkModule(), "tk");
++#endif
+     class.hCursor = LoadCursor(NULL, IDC_ARROW);
+ 
+     topLevelAtom = RegisterClass(&class);
+@@ -205,7 +209,9 @@ TkWinXInit(hInstance)
+ 
+     childAtom = RegisterClass(&class);
+     if (childAtom == 0) {
++#ifndef __OPEN32__
+ 	UnregisterClass((LPCTSTR)topLevelAtom, hInstance);
++#endif
+ 	panic("Unable to register TkChild class");
+     }
+ }
+@@ -464,14 +470,35 @@ TkWinTopLevelProc(hwnd, message, wParam,
+ 	    TkWinDrawable *twdPtr =
+ 		(TkWinDrawable *) GetWindowLong(hwnd, GWL_USERDATA);
+ 
++#ifdef __OPEN32__
++	    RECT r;
++	    /* Somehow sometimes it is not translated upside-down... */
++	    GetWindowRect(hwnd, &r);
++	    pos->x = r.left;
++	    pos->y = r.top;
++	    pos->cx = r.right - r.left;
++	    pos->cy = r.bottom - r.top;
++#endif
+ 	    TkWinWmConfigure(TkWinGetWinPtr(twdPtr), pos);
++#ifdef __OPEN32__
++	    break;			/* To update child PM window */
++#endif
+ 	    return 0;
+ 	}
+ 
++#ifndef __OPEN32__
+ 	case WM_CLOSE:
++#endif
+ 	case WM_LBUTTONDOWN:
+ 	case WM_MBUTTONDOWN:
+ 	case WM_RBUTTONDOWN:
++#ifdef __OPEN32__
++	    TranslateEvent(hwnd, message, wParam, lParam);
++	    /* To NOT get focus. */
++	    return 0;
++
++	case WM_CLOSE:
++#endif
+ 	case WM_LBUTTONUP:
+ 	case WM_MBUTTONUP:
+ 	case WM_RBUTTONUP:
+@@ -568,11 +595,21 @@ TkWinChildProc(hwnd, message, wParam, lP
+ 	    return 0;
+ 	}
+ 
++#ifndef __OPEN32__
+ 	case WM_DESTROYCLIPBOARD:
+ 	case WM_PAINT:
++#endif
+ 	case WM_LBUTTONDOWN:
+ 	case WM_MBUTTONDOWN:
+ 	case WM_RBUTTONDOWN:
++#ifdef __OPEN32__
++	    TranslateEvent(hwnd, message, wParam, lParam);
++	    /* To NOT get focus. */
++	    return 0;
++
++	case WM_DESTROYCLIPBOARD:
++	case WM_PAINT:
++#endif
+ 	case WM_LBUTTONUP:
+ 	case WM_MBUTTONUP:
+ 	case WM_RBUTTONUP:
+@@ -655,8 +692,13 @@ TranslateEvent(hwnd, message, wParam, lP
+ 	    BeginPaint(hwnd, &ps);
+ 	    event.xexpose.x = ps.rcPaint.left;
+ 	    event.xexpose.y = ps.rcPaint.top;
++#ifdef __OPEN32__
++	    event.xexpose.width = max(ps.rcPaint.right - ps.rcPaint.left,0);
++	    event.xexpose.height = max(ps.rcPaint.bottom - ps.rcPaint.top,0);
++#else
+ 	    event.xexpose.width = ps.rcPaint.right - ps.rcPaint.left;
+ 	    event.xexpose.height = ps.rcPaint.bottom - ps.rcPaint.top;
++#endif
+ 	    EndPaint(hwnd, &ps);
+ 	    event.xexpose.count = 0;
+ 	    break;
+@@ -789,6 +831,9 @@ TranslateEvent(hwnd, message, wParam, lP
+ 		     * code.
+ 		     */
+ 
++#ifdef __OPEN32__
++		    StashedKey = 0;
++#endif
+ 		    event.type = KeyPress;
+ 		    event.xany.send_event = -1;
+ 		    event.xkey.keycode = wParam;
+@@ -802,6 +847,9 @@ TranslateEvent(hwnd, message, wParam, lP
+ 		     * because Tk won't know what to do with them.  Instead, we
+ 		     * wait for the WM_CHAR messages which will follow.
+ 		     */
++#ifdef __OPEN32__
++		    StashedKey = 0;
++#endif
+ 		    event.type = KeyRelease;
+ 		    event.xkey.keycode = wParam;
+ 		    event.xkey.nchars = 0;
+@@ -813,6 +861,9 @@ TranslateEvent(hwnd, message, wParam, lP
+ 		     * Synthesize both a KeyPress and a KeyRelease.
+ 		     */
+ 
++#ifdef __OPEN32__
++		    StashedKey = (char) lParam;
++#endif
+ 		    event.type = KeyPress;
+ 		    event.xany.send_event = -1;
+ 		    event.xkey.keycode = 0;
+@@ -981,6 +1032,9 @@ GetTranslatedKey(xkey)
+ 	    && PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
+ 	if ((msg.message == WM_CHAR) || (msg.message == WM_SYSCHAR)) {
+ 	    xkey->trans_chars[xkey->nchars] = (char) msg.wParam;
++#ifdef __OPEN32__
++	    StashedKey = (char) msg.wParam;
++#endif
+ 	    xkey->nchars++;
+ 	    GetMessage(&msg, NULL, 0, 0);
+ 	    if ((msg.message == WM_CHAR) && (msg.lParam & 0x20000000)) {

@@ -1,0 +1,477 @@
+touch README.os2
+exit 0
+
+diff -pru -x *.m -x *.t Tk402.001/basic_demo Tk402.001.pm/basic_demo
+--- Tk402.001/basic_demo	Sat Jun  7 10:34:58 1997
++++ Tk402.001.pm/basic_demo	Tue Jun 24 17:30:44 1997
+@@ -344,7 +344,8 @@ $top->property("set",MYPROP,AREA,32,[1,2
+ 
+ $top->update("idletasks");
+ 
+-if (open(Gibberish,"</dev/tty"))
++if (open(Gibberish, $^O eq 'os2' ? '<&STDIN' : "</dev/tty") 
++    and ($^O ne 'os2' or not -t Gibberish))	# XFree86-OS/2 and PM quirks
+  {
+   $top->fileevent(Gibberish,'readable',[sub { my ($fh) = @_; print "stdin:",scalar <$fh> },\*Gibberish]);
+  }
+diff -pru -x *.m -x *.t Tk402.001/demos/demos/widtrib/HList.pl Tk402.001.pm/demos/demos/widtrib/HList.pl
+--- Tk402.001/demos/demos/widtrib/HList.pl	Wed Apr 23 09:47:02 1997
++++ Tk402.001.pm/demos/demos/widtrib/HList.pl	Thu Jun 19 13:24:20 1997
+@@ -13,7 +13,7 @@ sub HList {
+         -text => 'HList - A hierarchial listbox widget.',
+ 	-geometry_manager => 'grid',
+     );
+-    $top = $demo_widget->top;	# get grid master
++    $top = $demo_widget->Top;	# get grid master
+     my $h = $top->Scrolled(qw\HList -separator / -selectmode single -width 30
+ 			   -height 20 -indent 35 -scrollbars se
+ 			   -itemtype imagetext \
+--- Tk402.001/Makefile.PL	Fri Jun 13 08:32:12 1997
++++ Tk402.001.pm/Makefile.PL	Thu Jun 26 00:21:18 1997
+@@ -6,8 +6,32 @@ BEGIN 
+   $IsWin32   = $^O eq 'MSWin32';
+   $VERSION = '402.001';
+ 
+-  $win_arch = ($IsWin32) ? $^O : 'x';		# Currently 'x' and 'open32' supported
++  $win_arch = shift @ARGV if @ARGV and $ARGV[0] =~ /^(open32|pm|x|MSWin32)$/;
++  if ($^O eq 'os2') {
++    if (not defined $win_arch) {
++      die <<EOD;
++Please start me as one of
++	perl $0 x
++	perl $0 open32
++	perl $0 pm
+ 
++EOD
++    }
++    if ($win_arch ne 'x' and not -r 'pTk/mTk/open32/tkWinOS2.c' ) {
++      die <<EOD;
++Cannot find pTk/mTk/open32/tkWinOS2.c, did you read README.os2?
++
++EOD
++    }
++    if ($win_arch eq 'pm' and not -r 'pTk/mTk/os2/tkOS2Int.h') {
++      die <<EOD;
++Cannot find pTk/mTk/os2/tkOS2Int.h, did you read README.os2?
++
++EOD
++    }
++  }
++  $win_arch = ($IsWin32) ? $^O : 'x'
++    if not defined $win_arch; # Currently 'x', 'pm', 'open32', 'MSWin32'
+   require "./myConfig";
+   use lib ($Tk::MMutil::dir=getcwd);
+  }
+@@ -36,7 +60,7 @@ Tk::MMutil::TkExtMakefile(
+     'VERSION'  => $VERSION,
+     'NAME'     => 'Tk',
+     'DISTNAME' => "Tk",
+-    'MYEXTLIB' => 'pTk/libpTk$(LIB_EXT)' . ($win_arch eq 'open32'
++    'MYEXTLIB' => 'pTk/libpTk$(LIB_EXT)' . ($win_arch =~ /^(open32|pm)$/
+ 					    ? ' pTk/dllInit$(LIB_EXT)'
+ 					    : ''),
+     'LIBS'    => \@libs,
+diff -pru -x *.m -x *.t Tk402.001/Mwm/Mwm.xs Tk402.001.pm/Mwm/Mwm.xs
+--- Tk402.001/Mwm/Mwm.xs	Thu Mar 20 11:44:50 1997
++++ Tk402.001.pm/Mwm/Mwm.xs	Fri Jun 20 12:43:10 1997
+@@ -18,7 +18,7 @@
+ #include "tkGlue.h"
+ #include "tkGlue.m"
+ 
+-#ifndef __WIN32__
++#if !defined(__WIN32__) && !defined(__PM__)
+ extern int Tix_MwmCmd _ANSI_ARGS_((ClientData,Tcl_Interp *,int, Arg *));
+ #endif
+ 
+@@ -32,7 +32,7 @@ BOOT:
+  {
+   IMPORT_VTABLES;
+   /* Initialize the display item types */
+-#ifndef __WIN32__
++#if !defined(__WIN32__) && !defined(__PM__)
+   Lang_TkCommand("mwm",Tix_MwmCmd);
+ #endif
+  }
+diff -pru -x *.m -x *.t Tk402.001/myConfig Tk402.001.pm/myConfig
+--- Tk402.001/myConfig	Fri Jun  6 08:44:22 1997
++++ Tk402.001.pm/myConfig	Thu Jun 19 15:04:12 1997
+@@ -316,8 +316,13 @@ if ($win_arch eq 'x') {
+   }
+   die "Cannot find OS/2 toolkit" unless $toolkit;
+   $inc = "-I../pTk/mTk/xlib -I../../pTk/mTk/xlib -IpTk/mTk/xlib";
++  $inc .= " -I$toolkit/H -I../pTk/mTk/open32/h -IpTk/mTk/open32/h -ImTk/os2_rc";
+   $define .= " -D__WIN32__";
+   $xlib = "-L$toolkit/LIB -lpmwinx";
++} elsif ($win_arch eq 'pm') {
++  $define .= " -D__PM__";
++  $inc = "-I../pTk/mTk/xlib -I../../pTk/mTk/xlib -IpTk/mTk/xlib -ImTk/os2_rc";
++  $xlib = "";                          # No library is needed
+ } elsif ($^O eq 'MSWin32') {
+   $inc = '-I$(TKDIR)/pTk/mTk/xlib';
+ }
+@@ -358,7 +363,7 @@ if (!defined($MakefileName) || $Makefile
+   my $config = "package Tk::Config;\nrequire Exporter;\n\@ISA = qw(Exporter);\n";
+   my $sym;
+   my @export = (); 
+-  foreach $sym (qw(VERSION inc define xlib xinc gccopt))
++  foreach $sym (qw(VERSION inc define xlib xinc gccopt win_arch))
+    {         
+     my $val = ${$sym};
+     $val =~ s/([\\\'])/\\$1/g;
+diff -pru -x *.m -x *.t Tk402.001/pTk/Lang.h Tk402.001.pm/pTk/Lang.h
+--- Tk402.001/pTk/Lang.h	Fri Jun  6 08:44:22 1997
++++ Tk402.001.pm/pTk/Lang.h	Thu Jun 19 08:25:42 1997
+@@ -22,6 +22,12 @@
+ #include <stdlib.h>
+ #endif
+ 
++#ifdef __EMX__
++typedef long fd_mask;
++#   define strncasecmp strnicmp
++#   define strcasecmp stricmp
++#endif
++
+ /*
+  * When version numbers change here, must also go into the following files
+  * and update the version numbers:
+diff -pru -x *.m -x *.t Tk402.001/pTk/Makefile.PL Tk402.001.pm/pTk/Makefile.PL
+--- Tk402.001/pTk/Makefile.PL	Fri Jun 13 08:32:14 1997
++++ Tk402.001.pm/pTk/Makefile.PL	Thu Jun 19 14:28:12 1997
+@@ -3,11 +3,7 @@ use ExtUtils::MakeMaker;
+ 
+ use Tk::MMtry qw(try_compile);
+ use Tk::MMutil;
+-use Tk::Config;
+-
+-if ($win_arch eq 'open32') {
+-  $inc .= " -I$toolkit/H -Imtk/open32/h";
+-}
++use Tk::Config '!$VERSION';
+ 
+ Tk::MMutil::TkExtMakefile(
+     'NAME'	=> 'Tk::pTk',
+@@ -47,11 +43,19 @@ sub MY::post_initialize
+   {
+    @list = qw(win xlib generic tixWin tixGeneric tclWin tclGeneric);
+   }
++ elsif ($win_arch eq 'open32')
++  {
++   @list = qw(open32 open32/h win xlib generic tixWin tixGeneric tclUnix tclGeneric );
++  }
++ elsif ($win_arch eq 'pm')
++  {
++   @list = qw(os2 open32 xlib generic tixWin tixGeneric tclUnix tclGeneric );
++  }
+  else
+   {
+    @list = qw(unix generic tixUnix tixGeneric tclUnix tclGeneric );
+   }
+- print STDERR "Generating Dependencies for $^O\n";
++ print STDERR "Generating Dependencies for $^O, win_arch=$win_arch\n";
+  foreach $dir (@list)
+   {
+    my %exc;
+@@ -103,6 +107,7 @@ sub MY::post_initialize
+   }
+  $self->Tk::MMutil::mTk_CHO(\%mTk,@loose);
+  my %files = ();
++ $files{'windows.h'} = 1 if $win_arch eq 'open32';
+  my $name;
+  $self->{'dir_targets'} = [];
+  $dir = $self->catdir('$(INST_ARCHLIBDIR)','pTk');
+@@ -117,7 +122,7 @@ sub MY::post_initialize
+   {
+    $self->{PM}->{$name} = $self->catfile($dir,$name);
+   }
+- if ($^O eq 'MSWin32')
++ if ($^O eq 'MSWin32' or $win_arch eq 'open32' or $win_arch eq 'pm')
+   {my $ddir = $self->catdir('$(INST_ARCHLIBDIR)','X11');
+    my $sdir = $self->catdir('mTk','xlib','X11');
+    push(@{$self->{'dir_targets'}},$ddir);
+@@ -162,7 +167,7 @@ sub MY::static 
+ {
+   my $self = shift;
+   my $str  = $self->MM::static(@_);
+-  if ($win_arch eq 'open32')
++  if ($win_arch eq 'open32' or $win_arch eq 'pm')
+    {
+     $str .= '
+ static :: dllInit$(LIB_EXT)
+diff -pru -x *.m -x *.t Tk402.001/pTk/mkVFunc Tk402.001.pm/pTk/mkVFunc
+--- Tk402.001/pTk/mkVFunc	Tue Mar 18 01:21:52 1997
++++ Tk402.001.pm/pTk/mkVFunc	Thu Jun 19 17:58:36 1997
+@@ -2,8 +2,14 @@
+ 
+ my $win_arch = shift;
+ die "Unknown \$win_arch" unless $win_arch eq 'open32'
++                                or $win_arch eq 'pm'
+                                 or $win_arch eq 'x'
+                                 or $win_arch eq 'MSWin32';
++my $xexcl = <<EOM;
++#if (defined(__WIN32__) || defined(__PM__)) && !defined(DO_X_EXCLUDE)
++#  define DO_X_EXCLUDE
++#endif
++EOM
+ 
+ sub Ignore
+ {
+@@ -174,6 +180,8 @@ sub Vfunc
+    print VMACRO "#define _${gard}_VM\n";
+    print VMACRO "#include \"$htfile\"\n"; 
+    print VMACRO "#ifndef NO_VTABLES\n";
++   print VMACRO $xexcl if %WinIgnore;
++   print VFUNC  $xexcl if %WinIgnore;
+    foreach $func (sort keys %VVar)                     
+     {                                                   
+      if (!exists($Exclude{$func}) && !exists($Ignore{$func}))                       
+@@ -187,16 +195,19 @@ sub Vfunc
+     {                                                   
+      if (!exists($Exclude{$func}) && !exists($Ignore{$func}))                       
+       {                                                 
+-       print VFUNC "#ifndef __WIN32__\n" if exists($WinIgnore{$func});  
++       print VFUNC "#ifndef DO_X_EXCLUDE\n" if exists($WinIgnore{$func});  
+        print VFUNC "#ifndef $func\n";  
+        print VFUNC $VFunc{$func};                     
+        print VFUNC "#endif\n";
+-       print VFUNC "#endif /* !__WIN32__ */\n" if exists($WinIgnore{$func});  
+-       print VMACRO "#ifndef __WIN32__\n" if exists($WinIgnore{$func});  
++       print VFUNC "#endif /* !DO_X_EXCLUDE */\n" if exists($WinIgnore{$func});  
++       print VFUNC "\n";
++
++       print VMACRO "#ifndef DO_X_EXCLUDE\n" if exists($WinIgnore{$func});  
+        print VMACRO "#ifndef $func\n";  
+-       print VMACRO "#define $func (*${name}ptr->V_$func)\n";
++       print VMACRO "#  define $func (*${name}ptr->V_$func)\n";
+        print VMACRO "#endif\n";
+-       print VMACRO "#endif /* !__WIN32__ */\n" if exists($WinIgnore{$func});  
++       print VMACRO "#endif /* !DO_X_EXCLUDE */\n" if exists($WinIgnore{$func});  
++       print VMACRO "\n";
+       }                                                 
+      delete $Ignore{$func};
+     }                                                   
+diff -pru -x *.m -x *.t Tk402.001/pTk/XrmOption.c Tk402.001.pm/pTk/XrmOption.c
+--- Tk402.001/pTk/XrmOption.c	Wed Jun 11 11:44:26 1997
++++ Tk402.001.pm/pTk/XrmOption.c	Thu Jun 19 14:35:24 1997
+@@ -8,7 +8,7 @@
+  * of this file, and for a DISCLAIMER OF ALL WARRANTIES.
+  */
+ 
+-#if !defined(__WIN32__) && !defined(_WIN32)
++#if !defined(__WIN32__) && !defined(_WIN32) && !defined(__PM__)
+ 
+ static char sccsid[] = "@(#) tkOption.c 1.41 95/06/25 15:30:42";
+ 
+@@ -749,7 +749,7 @@ void
+ Xrm_import(class)
+ char *class;
+ {
+-#if !defined(__WIN32__) && !defined(_WIN32)
++#if !defined(__WIN32__) && !defined(_WIN32) && !defined(__PM__)
+  /* This is sneaky - we patch up the function tables so 
+      that calls to Tk*Option*() map to Xrm versions.
+  */
+diff -pru -x *.m -x *.t Tk402.001/Tk/MMutil.pm Tk402.001.pm/Tk/MMutil.pm
+--- Tk402.001/Tk/MMutil.pm	Fri Jun 13 08:32:14 1997
++++ Tk402.001.pm/Tk/MMutil.pm	Sat Jun 21 01:33:44 1997
+@@ -9,8 +9,6 @@ use Carp;
+ use Tk::Config;
+ @MYEXPORT = qw(perldepend cflags const_config constants installbin c_o xs_o makefile manifypods);
+ 
+-*win_arch = \$main::win_arch;
+-
+ sub arch_prune
+ {
+  my $hash = shift;
+@@ -25,6 +23,12 @@ sub arch_prune
+      delete $hash->{$_} if /Unix|Mwm/ and not /tclUnix/;
+      delete $hash->{$_} if /winMain|dllMain/;
+     }
++   elsif ($win_arch eq 'pm') 
++    {
++     delete $hash->{$_} if /Unix|Mwm/ and not /tclUnix/;
++     delete $hash->{$_} if /os2Main|dllMain|tkOS2Dll|^xgc\./;
++     delete $hash->{$_} if /ImgUtil|tkWin[A-Z0-9]/ and not /OS2/;
++    }
+    elsif ($win_arch eq 'MSWin32') 
+     {
+      delete $hash->{$_} if /Unix|Mwm/ and not /tclUnix/;
+@@ -150,6 +154,14 @@ sub perldepend
+         {
+          s/Unix/Win/g;
+         }
++       elsif ($win_arch eq 'open32') {
++         s/tixUnix/tixWin/g;
++         s/\btkWinInt\.h\b/tkWinInt.h windows.h/g;
++       }
++       elsif ($win_arch eq 'pm') {
++         s/tixUnix/tixWin/g;
++         s/tkUnix/tkOS2/g;
++       }
+        s/^([^:]*)\.o\s*:/$1$self->{OBJ_EXT}:/;
+        $str .= $_;
+       }
+diff -pru -x *.m -x *.t Tk402.001/Tk.pm Tk402.001.pm/Tk.pm
+--- Tk402.001/Tk.pm	Mon Jun  9 09:45:24 1997
++++ Tk402.001.pm/Tk.pm	Wed Jun 25 17:18:22 1997
+@@ -223,7 +223,13 @@ sub SplitString
+ {
+  local $_ = shift;
+  carp "SplitString '$_'";
+- return split(/\s+/,$_);
++ my (@arr, $tmp);
++ while (/\{([^{}]*)\}|((?:[^\s\\]|\\.)+)/gs) {
++   if (defined $1) { push @arr, $1 }
++   else { $tmp = $2 ; $tmp =~ s/\\([\s\\])/$1/g; push @arr, $tmp }
++ }
++ return @arr;
++ #return split(/\s+/,$_);
+ }
+ 
+ 
+diff -pru -x *.m -x *.t Tk402.001/Tk.xs Tk402.001.pm/Tk.xs
+--- Tk402.001/Tk.xs	Wed Jun 11 11:44:26 1997
++++ Tk402.001.pm/Tk.xs	Thu Jun 19 08:25:44 1997
+@@ -15,8 +15,8 @@
+ #include "pTk/tkXrm.h"
+ #include "pTk/default.h"
+ 
+-#ifdef __WIN32__
+-#include "pTk/tkWinInt.h"
++#if defined(__WIN32__) && !defined(__EMX__)
++#  include "pTk/tkWinInt.h"
+ #endif
+ 
+ #include "tkGlue.h"
+diff -pru -x *.m -x *.t Tk402.001/tkGlue.c Tk402.001.pm/tkGlue.c
+--- Tk402.001/tkGlue.c	Thu Jun 12 09:31:14 1997
++++ Tk402.001.pm/tkGlue.c	Thu Jun 19 08:25:46 1997
+@@ -4625,7 +4625,12 @@ Tcl_RegExp re;
+ char *string;
+ char *start;
+ {
++#ifdef REXEC_COPY
++ return pregexec(re,string,string+strlen(string),start,0,
++                 Nullsv,NULL,REXEC_COPY);
++#else
+  return pregexec(re,string,string+strlen(string),start,0,NULL,1);
++#endif
+ }
+ 
+ void 
+diff -pru -x *.m -x *.t Tk402.001/Xlib/Xlib.xs Tk402.001.pm/Xlib/Xlib.xs
+--- Tk402.001/Xlib/Xlib.xs	Fri Jun 13 10:45:14 1997
++++ Tk402.001.pm/Xlib/Xlib.xs	Fri Jun 20 13:53:02 1997
+@@ -123,7 +123,7 @@ int flags;
+   croak("Cannot get graphic context");
+ }
+ 
+-#ifdef WIN32
++#if defined(WIN32) || defined(__WIN32__) || defined(__PM__)
+ /* wrap the naive macro versions of these ... */
+ static int
+ pTk_XSync(Display *dpy, int flush)
+@@ -141,7 +141,7 @@ pTk_XFlush(Display *dpy)
+ #else
+ #define pTk_XSync  XSync
+ #define pTk_XFlush XFlush
+-#endif /* WIN32 */
++#endif /* WIN32 or friends */
+ 
+ 
+ 
+@@ -217,7 +217,7 @@ int		max 
+ PPCODE:
+  {
+   int  count = 0;
+-#ifndef __WIN32__
++#if !defined(__WIN32__) && !defined(__PM__)
+   char **list = XListFonts(dpy, pattern, max, &count);
+   int i;
+   EXTEND(sp, count);
+--- Tk402.001.test/README.os2	Thu Jun 26 13:05:06 1997
++++ Tk402.001.pm/README.os2	Thu Jun 26 13:10:38 1997
+@@ -0,0 +1,84 @@
++There are 3 different ways to compile Tk under OS/2: for XFree86, for Open32 
++(this is IBM's porting level above Win32), and for PM.
++
++To compile for Open32 and PM you need additional files, available in
++$CPAN/ports/os2/tk/.  To be safe, download all of them, and unzip the files
++with patches to be ready to apply.  If you work with a release of Tk later
++than 402.001, some of the patches may be already applied, so use your
++best judgement. 
++
++!!! You do not need to apply patches to .../os2/* files, they are 
++already applied !!!  Just ignore the patches not mentioned below.  (You
++may want to apply one of them in reverse (-R to gnupatch) to get a source for
++tcl/Tk.  Another one need to stay, it corrects bugs.)
++
++A lot of problems are unresolved.  Please be patient.  All the Tk-ish
++problem in tcl/tk port PLUS unability to do fileevents are 
++
++Building for PM
++~~~~~~~~~~~~~~~
++a) Unzip both 
++	perltk_os2_pm.zip 
++	perltk_os2_common.zip 
++   inside the main Tk directory.
++b) Apply the patches in
++	diff_pTk_for_os2_402 
++	diff_mTk_for_os2_402 
++   with
++	gnupatch -p1 < patch-file-name |& tee 00patch
++   or
++	gnupatch -p1 < patch-file-name
++c) Do
++	perl Makefile.PM pm
++	make
++	addres
++	perl__ -Mblib basic_demo
++	perl__ -Mblib demos/widget
++	make install
++d) Do not forget you need to use perl__ to run PM programs instead of 
++   just perl!
++
++Building for Open32
++~~~~~~~~~~~~~~~~~~~
++a) Unzip
++	perltk_os2_common.zip 
++   inside the main Tk directory.
++b) Apply the patches in
++	diff_pTk_for_os2_402 
++	diff_mTk_for_os2_402 
++   with
++	gnupatch -p1 < patch-file-name |& tee 00patch
++   or
++	gnupatch -p1 < patch-file-name
++c) Do
++	perl Makefile.PM open32
++	make
++	addres
++	perl__ -Mblib basic_demo
++	perl__ -Mblib demos/widget
++	make install
++d) Do not forget you need to use perl__ to run PM programs!
++
++Building for XFree86
++~~~~~~~~~~~~~~~~~~~~
++a) Apply the patches in
++	diff_pTk_for_os2_402 
++	diff_mTk_for_os2_402 
++   with
++	gnupatch -p1 < patch-file-name |& tee 00patch
++   or
++	gnupatch -p1 < patch-file-name
++b) Do
++	perl Makefile.PM x
++	make
++	perl -Mblib basic_demo
++	perl -Mblib demos/widget
++	make install
++
++Authors:
++~~~~~~~
++
++PM code for tcl/Tk: 
++	Illya Vaes, ivaes@hr.ns.nl
++Port to Open32, XFree86-OS/2, adaptation of PM code to Perl/Tk: 
++	Ilya Zakharevich, ilya@math.ohio-state.edu
